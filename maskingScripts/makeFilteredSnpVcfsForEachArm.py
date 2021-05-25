@@ -4,6 +4,8 @@ from miscFuncs import *
 vcfSnpFileName1, vcfSnpFileName2, vcfAllSitesFileName1, vcfAllSitesFileName2, maskedFaFileName, qualThreshold, outVcfPrefix = sys.argv[1:]
 qualThreshold = int(qualThreshold)
 
+# SV: this function is used to initialize all the SNP locations
+# SV: this is the only use of the first SNP VCF files
 def addSnpLocsInVcfFile(vcfFileName, snpLocs, outGenos, quals):
     with open(vcfFileName) as vcfFile:
         for line in vcfFile:
@@ -19,8 +21,9 @@ maskedGenome = readFaAsLists(maskedFaFileName, upper=True)
 arms = maskedGenome.keys()
 outFiles = {}
 for arm in arms:
-    outFileName = outVcfPrefix + arm + ".vcf"
-    outFiles[arm] = open(outFileName, "w")
+#    outFileName = outVcfPrefix + arm + ".vcf"
+#    outFiles[arm] = open(outFileName, "w")
+    outFiles[arm] = ""
 
 snpLocs = {}
 outGenos = {}
@@ -39,43 +42,32 @@ for vcfFileName in [vcfAllSitesFileName1, vcfAllSitesFileName2]:
         for line in vcfFile:
             if line.startswith("#CHROM\tPOS\t"):
                 if firstFile:
-                    header1 = line.strip()
+                    header1 = line.strip()  # SV: stores the header of the first VCF file
                 else:
                     fileIndex += 1
                     header2Samps = line.strip().split("\tFORMAT\t")
                     assert len(header2Samps) == 2
-                    header2Samps = header2Samps[1]
+                    header2Samps = header2Samps[1]  # SV: stores the format of the second VCF file
                     for arm in arms:
-                        outFiles[arm].write(header1 + "\t" + header2Samps + "\n")
-                isInbred = [False]*9
-                line = line.strip().split("\t")
-                for i in range(9, len(line)):
-
-                    #TODO: the line below is meant to flag individuals that are
-                    # inbred and should thus not have heterozygous base calls.
-                    # In the sim-sech study this applied to all simulans genomes
-                    # which began either with the prefix MD or NS (while all of
-                    # the sechellia genome identifiers began with SECH.
-                    if line[i][:2] in ("MD", "NS"):
-                        isInbred.append(True)
-                    else:
-                        isInbred.append(False)
+                        outFiles[arm] += header1 + "\t" + header2Samps + "\n"  # SV: creates the header based on all the samples for the resulting VCF files
             elif not line.startswith("#"):
                 line = line.strip().split("\t")
                 arm, pos, varId, ref, alt, qual, varFilter, info, fmt = line[:9]
                 pos = int(pos)
-                if snpLocs.has_key((arm, pos)) and maskedGenome[arm][pos-1] != 'N':
-                    snpLocs[(arm, pos)] += 1
+                if snpLocs.has_key((arm, pos)) and maskedGenome[arm][pos-1] != 'N':  # SV: there is a non-masked SNP at this position
+                    snpLocs[(arm, pos)] += 1  # SV: stores the number of occurrences of this SNP (0, 1 or 2 if in both species)
                     if alt != ".":
                         if not altAlleles.has_key((arm, pos)):
                             altAlleles[(arm, pos)] = {}
-                        altAlleles[(arm, pos)][alt] = 1
+                        altAlleles[(arm, pos)][alt] = 1  # SV: counts the number of alternate alleles for this position
                     visitedSnpCount[fileIndex] += 1
                     if qual == ".":
                         qual = 0.0
                     else:
                         qual = float(qual)
                     quals[(arm, pos)].append(qual)
+
+                    # SV: creation of new format
                     genoFormat = fmt.split(":")
                     genoIndex = None
                     gqIndex = None
@@ -88,10 +80,12 @@ for vcfFileName in [vcfAllSitesFileName1, vcfAllSitesFileName2]:
                             rgqIndex = j
                         elif genoFormat[j] == "GT":
                             genoIndex = j
+
+                    # SV: creation of entry for each individual
                     for i in range(9, len(line)):
                         gtLs = line[i].split(":")
                         assert gtLs[genoIndex] != "1/0"
-                        if gtLs[genoIndex] == "./." or (len(gtLs) == 1 and gtLs[genoIndex] == "0/0") or (isInbred[i] and gtLs[genoIndex] == "0/1"):
+                        if gtLs[genoIndex] == "./." or (len(gtLs) == 1 and gtLs[genoIndex] == "0/0"):
                             gq = 0
                         elif rgqIndex != None and gtLs[rgqIndex] != ".":
                             gq = int(gtLs[rgqIndex])
@@ -102,11 +96,6 @@ for vcfFileName in [vcfAllSitesFileName1, vcfAllSitesFileName2]:
                         if gq < qualThreshold:
                             outGenos[(arm, pos)].append("./." + ":" + str(gq))
                         else:
-                            if "0/1" in gtLs[genoIndex] and isInbred[i]:
-                                print line[:9]
-                                print line[9:]
-                                print isInbred
-                                raise Exception
                             outGenos[(arm, pos)].append(gtLs[genoIndex] + ":" + str(gq))
                     if not firstFile:
                         if not altAlleles.has_key((arm, pos)):
@@ -115,12 +104,15 @@ for vcfFileName in [vcfAllSitesFileName1, vcfAllSitesFileName2]:
                             if len(altAlleles[(arm, pos)]) != 1:
                                 print arm, pos, altAlleles[(arm, pos)]
                             outLine = "\t".join(line[:4] + [altAlleles[(arm, pos)].keys()[0], str(max(quals[(arm, pos)])), ".", ".", newGenoFormat] + outGenos[(arm, pos)])
-                            outFiles[arm].write(outLine + "\n")
+                            outFiles[arm] += outLine + "\n"
                             writtenLineCount += 1
     firstFile = False
 
 for arm in outFiles:
-    outFiles[arm].close()
+    outFileName = outVcfPrefix + arm + ".vcf"
+    outFile = open(outFileName, "w")
+    outFile.write(outFiles[arm])
+    outFile.close()
 
 print visitedSnpCount
 print writtenLineCount
